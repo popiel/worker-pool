@@ -20,7 +20,7 @@ The pooled worker pattern consists of four main components:
 1. A common queue of asynchronous operations to be done.
 2. A limited number of resource instances to be used to process those operations.
 3. A dedicated set of workers (one per resource instance) which actually process the operations.
-4. A supervisor that spawns and handles failures of any of the above.
+4. A shepherd that spawns and handles failures of any of the above.
 
 The following restrictions also apply:
 
@@ -53,100 +53,100 @@ Message sequence:
 ```mermaid
 sequenceDiagram
   participant worker
-  supervisor ->> worker: WakeUp
-  worker ->>+ supervisor: GiveMeWork
+  shepherd ->> worker: WakeUp
+  worker ->>+ shepherd: GiveMeWork
 loop
-  supervisor -->>- worker: WorkToDo
+  shepherd -->>- worker: WorkToDo
   activate worker
   note right of worker: Do the work
-  worker -->> supervisor: StatusReply(result, failure)
+  worker -->> shepherd: StatusReply(result, failure)
   worker -->>- worker: WorkDone
-  worker ->>+ supervisor: GiveMeWork
+  worker ->>+ shepherd: GiveMeWork
 end
-  supervisor -->>- worker: GoToSleep
+  shepherd -->>- worker: GoToSleep
 ```
 
-## Supervisor
+## Shepherd
 
-The supervisor is responsible for mediating communication between the outside world, the queue, and the workers.  No communication happens directly between those three elements without going through the supervisor, and the supervisor handles only that communication and error recovery.
+The shepherd is responsible for mediating communication between the outside world, the queue, and the workers.  No communication happens directly between those three elements without going through the shepherd, and the shepherd handles only that communication and error recovery.
 
-When the outside world wants to enqueue an operation, that operation is sent to the supervisor.
-Both the operation and a `CompletableFuture` of the operation's result are then sent to the queue, and if successfully enqueued, the supervisor responds to the outside world with the `CompletionStage` from the `CompletableFuture` (separating read and write interfaces of the async result).  If not all workers are currently busy, then the supervisor also wakes up any sleeping workers.
+When the outside world wants to enqueue an operation, that operation is sent to the shepherd.
+Both the operation and a `CompletableFuture` of the operation's result are then sent to the queue, and if successfully enqueued, the shepherd responds to the outside world with the `CompletionStage` from the `CompletableFuture` (separating read and write interfaces of the async result).  If not all workers are currently busy, then the shepherd also wakes up any sleeping workers.
 
 ```mermaid
 sequenceDiagram
 actor outside
-outside -)+ supervisor: SubmitWork
-supervisor ->>+ queue: AddWork
-queue -->>- supervisor: Done
-supervisor ->>- workers: WakeUp
+outside -)+ shepherd: SubmitWork
+shepherd ->>+ queue: AddWork
+queue -->>- shepherd: Done
+shepherd ->>- workers: WakeUp
 ```
 
-When a worker requests an operation to process, the supervisor attempts to dequeue an operation from the queue to give to the worker.  If such an operation is available, the supervisor records that the worker is working on that operation; otherwise the worker is told to go to sleep.  If the worker encounters any error (including processing timeout) before requesting another operation, the operation is considered to be failed and the supervisor may requeue it for (delayed) retry or discard it if too many attempts have already been made.  When an operation is successfully processed or finally discarded, the `CompletableFuture` from the queue entry is completed with the corresponding result, thus returning the result to the outside world.
+When a worker requests an operation to process, the shepherd attempts to dequeue an operation from the queue to give to the worker.  If such an operation is available, the shepherd records that the worker is working on that operation; otherwise the worker is told to go to sleep.  If the worker encounters any error (including processing timeout) before requesting another operation, the operation is considered to be failed and the shepherd may requeue it for (delayed) retry or discard it if too many attempts have already been made.  When an operation is successfully processed or finally discarded, the `CompletableFuture` from the queue entry is completed with the corresponding result, thus returning the result to the outside world.
 
 No work available:
 ```mermaid
 sequenceDiagram
-worker ->>+ supervisor: GiveMeWork
-supervisor ->>+ queue: GetWork
-queue -->>- supervisor: NoWorkUntil(deadline)
-supervisor -->> worker: GoToSleep
-supervisor -->>- supervisor: WakeAt(deadline)
+worker ->>+ shepherd: GiveMeWork
+shepherd ->>+ queue: GetWork
+queue -->>- shepherd: NoWorkUntil(deadline)
+shepherd -->> worker: GoToSleep
+shepherd -->>- shepherd: WakeAt(deadline)
 ```
 
 Successful work attempt:
 ```mermaid
 sequenceDiagram
 participant worker
-participant supervisor
+participant shepherd
 participant queue
 actor outside
-worker ->>+ supervisor: GiveMeWork
-supervisor ->>+ queue: GetWork
-queue -->>- supervisor: WorkRecord
-supervisor -->> supervisor: WorkFor(worker, work)
-supervisor -->>+ worker: WorkToDo
-worker -->>- supervisor: StatusReply(result)
-note right of supervisor: log successful WorkRecord
-supervisor -->>- outside: StatusReply(result)
+worker ->>+ shepherd: GiveMeWork
+shepherd ->>+ queue: GetWork
+queue -->>- shepherd: WorkRecord
+shepherd -->> shepherd: WorkFor(worker, work)
+shepherd -->>+ worker: WorkToDo
+worker -->>- shepherd: StatusReply(result)
+note right of shepherd: log successful WorkRecord
+shepherd -->>- outside: StatusReply(result)
 ```
 
 Initial failures:
 ```mermaid
 sequenceDiagram
-worker ->>+ supervisor: GiveMeWork
-supervisor ->>+ queue: GetWork
-queue -->>- supervisor: WorkRecord
-supervisor -->> supervisor: WorkFor(worker, work)
-supervisor -->>+ worker: WorkToDo
-worker -->>- supervisor: StatusReply(failure)
-note right of supervisor: log failed attempt
-supervisor -->>+ queue: AddWork(workRecord + failedAttempt)
-queue -->>- supervisor: Done
-supervisor ->>- workers: WakeUp
+worker ->>+ shepherd: GiveMeWork
+shepherd ->>+ queue: GetWork
+queue -->>- shepherd: WorkRecord
+shepherd -->> shepherd: WorkFor(worker, work)
+shepherd -->>+ worker: WorkToDo
+worker -->>- shepherd: StatusReply(failure)
+note right of shepherd: log failed attempt
+shepherd -->>+ queue: AddWork(workRecord + failedAttempt)
+queue -->>- shepherd: Done
+shepherd ->>- workers: WakeUp
 ```
 
 Final failure:
 ```mermaid
 sequenceDiagram
 participant worker
-participant supervisor
+participant shepherd
 participant queue
 actor outside
-worker ->>+ supervisor: GiveMeWork
-supervisor ->>+ queue: GetWork
-queue -->>- supervisor: WorkRecord
-supervisor -->> supervisor: WorkFor(worker, work)
-supervisor -->>+ worker: WorkToDo
-worker -->>- supervisor: StatusReply(failure)
-note right of supervisor: log failed WorkRecord
-supervisor -->>- outside: StatusReply(failure)
+worker ->>+ shepherd: GiveMeWork
+shepherd ->>+ queue: GetWork
+queue -->>- shepherd: WorkRecord
+shepherd -->> shepherd: WorkFor(worker, work)
+shepherd -->>+ worker: WorkToDo
+worker -->>- shepherd: StatusReply(failure)
+note right of shepherd: log failed WorkRecord
+shepherd -->>- outside: StatusReply(failure)
 ```
 
 
-The supervisor may also report the instantaneous count of workers that are busy vs. sleeping for monitoring purposes, and can also keep metrics about operation processing times.
+The shepherd may also report the instantaneous count of workers that are busy vs. sleeping for monitoring purposes, and can also keep metrics about operation processing times.
 
-When handling worker failures (explicit uncaught exceptions or implicit timeouts), the supervisor may employ different methods of worker recovery ranging from a state reset on the worker to a full kill and restart of the worker, as circumstances dictate.  Similarly, the supervisor may reset or restart the operation queue actor if it fails for any reason.  If the supervisor cannot reset or restart the workers or the operation queue actor, it can itself die to propagate the error further up the supervision hierarchy (and likely kill the whole service).
+When handling worker failures (explicit uncaught exceptions or implicit timeouts), the shepherd may employ different methods of worker recovery ranging from a state reset on the worker to a full kill and restart of the worker, as circumstances dictate.  Similarly, the shepherd may reset or restart the operation queue actor if it fails for any reason.  If the shepherd cannot reset or restart the workers or the operation queue actor, it can itself die to propagate the error further up the supervision hierarchy (and likely kill the whole service).
 
 # Other approaches
 
@@ -158,6 +158,6 @@ Traditional resource pooling (e.g. HikariCP) maintains a limited set of resource
 
 ## Simple load balancing across multiple workers
 
-Queue-less and supervisor-less load balancing across multiple workers is a simpler model for asynchronous operation processing.  However, such implementations allocate the operations to workers at request time instead of processing time, leading to extra latency if a given worker gets overloaded.  This can be patched with work-stealing systems, but that's an additional layer of complexity still requiring cooperation between the workers.  Also, without a supervisor, error handling is still the province of the caller and must be replicated.
+Queue-less and shepherd-less load balancing across multiple workers is a simpler model for asynchronous operation processing.  However, such implementations allocate the operations to workers at request time instead of processing time, leading to extra latency if a given worker gets overloaded.  This can be patched with work-stealing systems, but that's an additional layer of complexity still requiring cooperation between the workers.  Also, without a shepherd, error handling is still the province of the caller and must be replicated.
 
-Having a queue separate from the workers allows work to be processed as soon as a worker becomes available.  Having a supervisor centralizes error handling and allows consistent policies to be set.
+Having a queue separate from the workers allows work to be processed as soon as a worker becomes available.  Having a shepherd centralizes error handling and allows consistent policies to be set.
