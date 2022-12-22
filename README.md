@@ -41,16 +41,16 @@ The set of resource instances is the variable that is constrained to make sure t
 The actual processing of operations is done by a dedicated set of workers.  A worker repeatedly requests an operation to process and then processes the operation, until there are no operations to process (at which point the worker goes to sleep).  In the course of processing the operations, the worker may reserve resource instances from the pool, or the worker may actually directly own a resource instance and be responsible for allocating the resource when the worker is created and deallocating it when the worker dies (or, conversely, dying when the resource is deallocated).
 
 The worker cycles among 3 states: sleeping, waiting for work, and working.  The transition to the waiting for work state is done by the (shared) askForWork routine.
-::: mermaid
+```mermaid
 graph TD
   sleeping -->|WakeUp| askForWork(askForWork) -->|GiveMeWork| waitingForWork -->|WorkToDo| working -->|WorkDone| askForWork
   waitingForWork -->|GoToSleep| sleeping
   waitingForWork -.->|WakeUp| waitingForWork
   working -.->|WakeUp| working
-:::
+```
 
 Message sequence:
-::: mermaid
+```mermaid
 sequenceDiagram
   participant worker
   supervisor ->> worker: WakeUp
@@ -64,7 +64,7 @@ loop
   worker ->>+ supervisor: GiveMeWork
 end
   supervisor -->>- worker: GoToSleep
-:::
+```
 
 ## Supervisor
 
@@ -73,29 +73,29 @@ The supervisor is responsible for mediating communication between the outside wo
 When the outside world wants to enqueue an operation, that operation is sent to the supervisor.
 Both the operation and a `CompletableFuture` of the operation's result are then sent to the queue, and if successfully enqueued, the supervisor responds to the outside world with the `CompletionStage` from the `CompletableFuture` (separating read and write interfaces of the async result).  If not all workers are currently busy, then the supervisor also wakes up any sleeping workers.
 
-::: mermaid
+```mermaid
 sequenceDiagram
 actor outside
 outside -)+ supervisor: SubmitWork
 supervisor ->>+ queue: AddWork
 queue -->>- supervisor: Done
 supervisor ->>- workers: WakeUp
-:::
+```
 
 When a worker requests an operation to process, the supervisor attempts to dequeue an operation from the queue to give to the worker.  If such an operation is available, the supervisor records that the worker is working on that operation; otherwise the worker is told to go to sleep.  If the worker encounters any error (including processing timeout) before requesting another operation, the operation is considered to be failed and the supervisor may requeue it for (delayed) retry or discard it if too many attempts have already been made.  When an operation is successfully processed or finally discarded, the `CompletableFuture` from the queue entry is completed with the corresponding result, thus returning the result to the outside world.
 
 No work available:
-::: mermaid
+```mermaid
 sequenceDiagram
 worker ->>+ supervisor: GiveMeWork
 supervisor ->>+ queue: GetWork
 queue -->>- supervisor: NoWorkUntil(deadline)
 supervisor -->> worker: GoToSleep
 supervisor -->>- supervisor: WakeAt(deadline)
-:::
+```
 
 Successful work attempt:
-::: mermaid
+```mermaid
 sequenceDiagram
 participant worker
 participant supervisor
@@ -109,10 +109,10 @@ supervisor -->>+ worker: WorkToDo
 worker -->>- supervisor: StatusReply(result)
 note right of supervisor: log successful WorkRecord
 supervisor -->>- outside: StatusReply(result)
-:::
+```
 
 Initial failures:
-::: mermaid
+```mermaid
 sequenceDiagram
 worker ->>+ supervisor: GiveMeWork
 supervisor ->>+ queue: GetWork
@@ -124,10 +124,10 @@ note right of supervisor: log failed attempt
 supervisor -->>+ queue: AddWork(workRecord + failedAttempt)
 queue -->>- supervisor: Done
 supervisor ->>- workers: WakeUp
-:::
+```
 
 Final failure:
-::: mermaid
+```mermaid
 sequenceDiagram
 participant worker
 participant supervisor
@@ -141,7 +141,7 @@ supervisor -->>+ worker: WorkToDo
 worker -->>- supervisor: StatusReply(failure)
 note right of supervisor: log failed WorkRecord
 supervisor -->>- outside: StatusReply(failure)
-:::
+```
 
 
 The supervisor may also report the instantaneous count of workers that are busy vs. sleeping for monitoring purposes, and can also keep metrics about operation processing times.
